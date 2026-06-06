@@ -162,7 +162,7 @@ func trackOtherIP(scanner *bufio.Scanner) {
 	
 	info, err := fetchIPInfo(ipAddress)
 	if err != nil {
-		fmt.Printf("\n❌ Error fetching IP information: %v\n", err)
+		fmt.Printf("\nError fetching IP information: %v\n", err)
 		fmt.Print("\nPress Enter to continue...")
 		scanner.Scan()
 		return
@@ -245,7 +245,7 @@ func displayInfo(info *IPInfo) {
 	}
 	
 	fmt.Println("\n" + strings.Repeat("═", 66))
-	fmt.Println(" 📍 GEOLOCATION & NETWORK INTELLIGENCE REPORT")
+	fmt.Println(" GEOLOCATION & NETWORK INTELLIGENCE REPORT")
 	fmt.Println(strings.Repeat("═", 66))
 	fmt.Println()
 	
@@ -256,41 +256,41 @@ func displayInfo(info *IPInfo) {
 	
 	fmt.Println(" ┌─ LOCATION DETAILS")
 	fmt.Println(" │")
-	fmt.Printf(" │   🏳️  Country:         %s (%s)\n", detailed.Country, detailed.CountryCode)
-	fmt.Printf(" │   🏙️  State/Region:    %s (%s)\n", detailed.State, detailed.StateCode)
-	fmt.Printf(" │   🏘️  City:            %s\n", detailed.City)
-	fmt.Printf(" │   📮  Postal Code:     %s\n", detailed.PostalCode)
-	fmt.Printf(" │   📍  Coordinates:     %s\n", detailed.Coordinates)
-	fmt.Printf(" │   🕐  Timezone:        %s\n", detailed.Timezone)
+	fmt.Printf(" │    => Country:         %s (%s)\n", detailed.Country, detailed.CountryCode)
+	fmt.Printf(" │    => State/Region:    %s (%s)\n", detailed.State, detailed.StateCode)
+	fmt.Printf(" │    => City:            %s\n", detailed.City)
+	fmt.Printf(" │    => Postal Code:     %s\n", detailed.PostalCode)
+	fmt.Printf(" │    => Coordinates:     %s\n", detailed.Coordinates)
+	fmt.Printf(" │    => Timezone:        %s\n", detailed.Timezone)
 	fmt.Println(" │")
 	
 	fmt.Println(" ┌─ NETWORK & TELECOM SERVICE")
 	fmt.Println(" │")
-	fmt.Printf(" │   📡  ISP:             %s\n", detailed.TelecomService)
-	fmt.Printf(" │   🏢  Organization:    %s\n", detailed.Organization)
-	fmt.Printf(" │   🔢  AS Number:       %s\n", detailed.ASNumber)
-	fmt.Printf(" │   📛  AS Name:         %s\n", detailed.ASName)
+	fmt.Printf(" │       ISP:             %s\n", detailed.TelecomService)
+	fmt.Printf(" │       Organization:    %s\n", detailed.Organization)
+	fmt.Printf(" │       AS Number:       %s\n", detailed.ASNumber)
+	fmt.Printf(" │       AS Name:         %s\n", detailed.ASName)
 	fmt.Println(" │")
 	
 	fmt.Println(" ┌─ ADDITIONAL INTELLIGENCE")
 	fmt.Println(" │")
-	fmt.Printf(" │   📱  Mobile Network:  %s\n", boolToSymbol(detailed.IsMobile))
-	fmt.Printf(" │   🛡️  Proxy/VPN:       %s\n", boolToSymbol(detailed.IsProxy))
-	fmt.Printf(" │   ☁️  Hosting/Cloud:   %s\n", boolToSymbol(detailed.IsHosting))
+	fmt.Printf(" │       Mobile Network:  %s\n", boolToSymbol(detailed.IsMobile))
+	fmt.Printf(" │       Proxy/VPN:       %s\n", boolToSymbol(detailed.IsProxy))
+	fmt.Printf(" │       Hosting/Cloud:   %s\n", boolToSymbol(detailed.IsHosting))
 	fmt.Println(" │")
 	
 	fmt.Println(" └─────────────────────────────────────────────────────────")
 	fmt.Println(strings.Repeat("═", 66))
 	
 	if info.Lat != 0 && info.Lon != 0 {
-		fmt.Printf("\n🗺️  Google Maps: https://maps.google.com/?q=%.6f,%.6f\n", info.Lat, info.Lon)
+		fmt.Printf("\nGoogle Maps: https://maps.google.com/?q=%.6f,%.6f\n", info.Lat, info.Lon)
 		fmt.Println(strings.Repeat("─", 66))
 	}
 }
 
 func boolToSymbol(b bool) string {
 	if b {
-		return "✅ Yes"
+		return "Yes"
 	}
-	return "❌ No"
+	return "No"
 }
