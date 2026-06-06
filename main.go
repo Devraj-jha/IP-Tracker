@@ -68,8 +68,8 @@ func main() {
 			trackMyIP()
 		case "2":
 			trackOtherIP(scanner)
-		case "3":
-			fmt.Println("\nThank you for using IP Tracker! Goodbye!")
+		case "3", "exit", "EXIT", "Exit":
+			fmt.Println("\nThank you for using IP Tracker! Have A nice day!")
 			fmt.Println("=" + strings.Repeat("=", 58))
 			os.Exit(0)
 		default:
@@ -82,29 +82,24 @@ func main() {
 
 func displayBanner() {
 	banner := `
-╔══════════════════════════════════════════════════════════════╗
-║                                                              ║
-║    ██╗██████╗     ████████╗██████╗  █████╗  ██████╗███████╗ ║
-║    ██║██╔══██╗    ╚══██╔══╝██╔══██╗██╔══██╗██╔════╝██╔════╝ ║
-║    ██║██████╔╝       ██║   ██████╔╝███████║██║     █████╗   ║
-║    ██║██╔═══╝        ██║   ██╔══██╗██╔══██║██║     ██╔══╝   ║
-║    ██║██║            ██║   ██║  ██║██║  ██║╚██████╗███████╗ ║
-║    ╚═╝╚═╝            ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝ ╚═════╝╚══════╝ ║
-║                                                              ║
-║              ADVANCED IP GEOLOCATION TRACKER                 ║
-║                      v2.0 - Terminal Edition                 ║
-╚══════════════════════════════════════════════════════════════╝
+
+██╗██████╗░░░░░░░████████╗██████╗░░█████╗░░█████╗░██╗░░██╗███████╗██████╗░
+██║██╔══██╗░░░░░░╚══██╔══╝██╔══██╗██╔══██╗██╔══██╗██║░██╔╝██╔════╝██╔══██╗
+██║██████╔╝█████╗░░░██║░░░██████╔╝███████║██║░░╚═╝█████═╝░█████╗░░██████╔╝
+██║██╔═══╝░╚════╝░░░██║░░░██╔══██╗██╔══██║██║░░██╗██╔═██╗░██╔══╝░░██╔══██╗
+██║██║░░░░░░░░░░░░░░██║░░░██║░░██║██║░░██║╚█████╔╝██║░╚██╗███████╗██║░░██║
+╚═╝╚═╝░░░░░░░░░░░░░░╚═╝░░░╚═╝░░╚═╝╚═╝░░╚═╝░╚════╝░╚═╝░░╚═╝╚══════╝╚═╝░░╚═╝
 `
 	fmt.Println(banner)
 }
 
 func displayMenu() {
 	fmt.Println("\n" + strings.Repeat("─", 62))
-	fmt.Println("📡 MAIN MENU")
+	fmt.Println("=> MAIN MENU <=")
 	fmt.Println(strings.Repeat("─", 62))
-	fmt.Println("  1. 🖥️  Track MY IP Address (Current User)")
-	fmt.Println("  2. 🌐 Track ANOTHER IP Address (Enter manually)")
-	fmt.Println("  3. 🚪 Exit Program")
+	fmt.Println("  1. Track MY IP Address (Current User)")
+	fmt.Println("  2. Track ANOTHER IP Address (Enter manually)")
+	fmt.Println("  3. Exit Program")
 	fmt.Println(strings.Repeat("─", 62))
 }
 
