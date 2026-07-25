@@ -1,4 +1,5 @@
 test.go
 ip-tracker
 *.exe
+build/
 .claude
