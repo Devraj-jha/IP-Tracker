@@ -16,7 +16,7 @@ import (
 )
 
 // Version info
-const appVersion = "4.0.0"
+const appVersion = "5.0.0"
 
 // Colors
 var (
@@ -251,7 +251,7 @@ func runInteractive() {
 
 	for {
 		displayMenu()
-		fmt.Print("\n  Enter your choice (1-7): ")
+		fmt.Print("\n  Enter your choice (1-8): ")
 		scanner.Scan()
 		choice := strings.TrimSpace(scanner.Text())
 
@@ -265,12 +265,14 @@ func runInteractive() {
 		case "4":
 			dnsLookupMenu(scanner)
 		case "5":
+			portScanMenu(scanner)
+		case "6":
 			searchHistory()
-		case "6", "exit", "EXIT", "Exit", "q", "Q":
+		case "7", "exit", "EXIT", "Exit", "q", "Q":
 			printExit()
 			os.Exit(0)
 		default:
-			errorColor.Println("\n  Invalid choice! Please enter 1-6.")
+			errorColor.Println("\n  Invalid choice! Please enter 1-7.")
 			pressEnter(scanner)
 		}
 	}
@@ -411,8 +413,9 @@ func displayMenu() {
 	fmt.Println("  2.  Track ANOTHER IP Address")
 	fmt.Println("  3.  Batch Track from File")
 	fmt.Println("  4.  DNS Lookup")
-	fmt.Println("  5.  View Search History")
-	fmt.Println("  6.  Exit")
+	fmt.Println("  5.  Port Scanner")
+	fmt.Println("  6.  View Search History")
+	fmt.Println("  7.  Exit")
 	menuColor.Println("  " + strings.Repeat("─", 58))
 }
 
@@ -1055,6 +1058,245 @@ func displayDNSResult(result *DNSResult) {
 			printField("TXT", txt)
 		}
 	}
+}
+
+// --- Port Scanner ---
+
+// Common ports with their typical services
+var commonPorts = map[int]string{
+	21: "FTP", 22: "SSH", 23: "Telnet", 25: "SMTP", 53: "DNS",
+	80: "HTTP", 110: "POP3", 111: "RPCBind", 135: "MSRPC",
+	139: "NetBIOS", 143: "IMAP", 443: "HTTPS", 445: "SMB",
+	993: "IMAPS", 995: "POP3S", 1433: "MSSQL", 1521: "Oracle",
+	3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL", 5900: "VNC",
+	6379: "Redis", 8080: "HTTP-Alt", 8443: "HTTPS-Alt",
+	27017: "MongoDB",
+}
+
+type PortResult struct {
+	Port     int    `json:"port"`
+	Service  string `json:"service"`
+	Open     bool   `json:"open"`
+	Latency  int64  `json:"latency_ms,omitempty"`
+}
+
+func portScanMenu(scanner *bufio.Scanner) {
+	headerColor.Println("\n  " + strings.Repeat("─", 58))
+	headerColor.Println("  PORT SCANNER")
+	headerColor.Println("  " + strings.Repeat("─", 58))
+	fmt.Println("  1.  Scan Common Ports")
+	fmt.Println("  2.  Scan Custom Port Range")
+	fmt.Println("  3.  Scan Single Port")
+	fmt.Println("  4.  Back to Main Menu")
+
+	fmt.Print("\n  Choice: ")
+	scanner.Scan()
+	choice := strings.TrimSpace(scanner.Text())
+
+	switch choice {
+	case "1":
+		scanCommonPorts(scanner)
+	case "2":
+		scanCustomRange(scanner)
+	case "3":
+		scanSinglePort(scanner)
+	case "4":
+		return
+	default:
+		errorColor.Println("\n  Invalid choice!")
+		pressEnter(scanner)
+	}
+}
+
+func scanCommonPorts(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter target IP or hostname: ")
+	scanner.Scan()
+	target := strings.TrimSpace(scanner.Text())
+
+	if target == "" {
+		errorColor.Println("\n  No target entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	// Resolve hostname to IP if needed
+	ip := target
+	if net.ParseIP(target) == nil {
+		ips, err := net.LookupHost(target)
+		if err != nil || len(ips) == 0 {
+			errorColor.Printf("\n  Could not resolve hostname: %s\n", target)
+			pressEnter(scanner)
+			return
+		}
+		ip = ips[0]
+		successColor.Printf("\n  Resolved %s to %s\n", target, ip)
+	}
+
+	headerColor.Println("\n  Scanning common ports...")
+	fmt.Println(strings.Repeat("─", 58))
+
+	var results []PortResult
+	ports := make([]int, 0, len(commonPorts))
+	for port := range commonPorts {
+		ports = append(ports, port)
+	}
+
+	for _, port := range ports {
+		service := commonPorts[port]
+		open, latency := checkPort(ip, port, 2*time.Second)
+		if open {
+			successColor.Printf("  Port %5d %-12s OPEN  (%dms)\n", port, service, latency)
+			results = append(results, PortResult{Port: port, Service: service, Open: true, Latency: latency})
+		}
+	}
+
+	fmt.Println(strings.Repeat("─", 58))
+	if len(results) == 0 {
+		warnColor.Println("  No open ports found")
+	} else {
+		successColor.Printf("  Found %d open port(s)\n", len(results))
+	}
+	pressEnter(scanner)
+}
+
+func scanCustomRange(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter target IP or hostname: ")
+	scanner.Scan()
+	target := strings.TrimSpace(scanner.Text())
+
+	if target == "" {
+		errorColor.Println("\n  No target entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	// Resolve hostname to IP if needed
+	ip := target
+	if net.ParseIP(target) == nil {
+		ips, err := net.LookupHost(target)
+		if err != nil || len(ips) == 0 {
+			errorColor.Printf("\n  Could not resolve hostname: %s\n", target)
+			pressEnter(scanner)
+			return
+		}
+		ip = ips[0]
+		successColor.Printf("\n  Resolved %s to %s\n", target, ip)
+	}
+
+	fmt.Print("  Enter start port: ")
+	scanner.Scan()
+	var start int
+	if _, err := fmt.Sscanf(scanner.Text(), "%d", &start); err != nil || start < 1 || start > 65535 {
+		errorColor.Println("\n  Invalid start port!")
+		pressEnter(scanner)
+		return
+	}
+
+	fmt.Print("  Enter end port: ")
+	scanner.Scan()
+	var end int
+	if _, err := fmt.Sscanf(scanner.Text(), "%d", &end); err != nil || end < 1 || end > 65535 {
+		errorColor.Println("\n  Invalid end port!")
+		pressEnter(scanner)
+		return
+	}
+
+	if start > end {
+		errorColor.Println("\n  Invalid port range!")
+		pressEnter(scanner)
+		return
+	}
+
+	if end-start > 1000 {
+		warnColor.Printf("\n  Scanning %d ports — this may take a while\n", end-start+1)
+	}
+
+	headerColor.Printf("\n  Scanning ports %d-%d on %s...\n", start, end, ip)
+	fmt.Println(strings.Repeat("─", 58))
+
+	var openPorts []PortResult
+	for port := start; port <= end; port++ {
+		service := commonPorts[port]
+		if service == "" {
+			service = "unknown"
+		}
+		open, latency := checkPort(ip, port, 1*time.Second)
+		if open {
+			successColor.Printf("  Port %5d %-12s OPEN  (%dms)\n", port, service, latency)
+			openPorts = append(openPorts, PortResult{Port: port, Service: service, Open: true, Latency: latency})
+		}
+	}
+
+	fmt.Println(strings.Repeat("─", 58))
+	if len(openPorts) == 0 {
+		warnColor.Println("  No open ports found")
+	} else {
+		successColor.Printf("  Found %d open port(s)\n", len(openPorts))
+	}
+	pressEnter(scanner)
+}
+
+func scanSinglePort(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter target IP or hostname: ")
+	scanner.Scan()
+	target := strings.TrimSpace(scanner.Text())
+
+	if target == "" {
+		errorColor.Println("\n  No target entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	// Resolve hostname to IP if needed
+	ip := target
+	if net.ParseIP(target) == nil {
+		ips, err := net.LookupHost(target)
+		if err != nil || len(ips) == 0 {
+			errorColor.Printf("\n  Could not resolve hostname: %s\n", target)
+			pressEnter(scanner)
+			return
+		}
+		ip = ips[0]
+		successColor.Printf("\n  Resolved %s to %s\n", target, ip)
+	}
+
+	fmt.Print("  Enter port number: ")
+	scanner.Scan()
+	var port int
+	_, err := fmt.Sscanf(scanner.Text(), "%d", &port)
+	if err != nil || port < 1 || port > 65535 {
+		errorColor.Println("\n  Invalid port number!")
+		pressEnter(scanner)
+		return
+	}
+
+	service := commonPorts[port]
+	if service == "" {
+		service = "unknown"
+	}
+
+	fmt.Printf("\n  Checking port %d (%s) on %s...\n", port, service, ip)
+
+	open, latency := checkPort(ip, port, 3*time.Second)
+
+	if open {
+		successColor.Printf("\n  Port %d (%s) is OPEN\n", port, service)
+		fmt.Printf("  Response time: %dms\n", latency)
+	} else {
+		errorColor.Printf("\n  Port %d (%s) is CLOSED/FILTERED\n", port, service)
+	}
+	pressEnter(scanner)
+}
+
+func checkPort(host string, port int, timeout time.Duration) (bool, int64) {
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), timeout)
+	latency := time.Since(start).Milliseconds()
+	if err != nil {
+		return false, latency
+	}
+	conn.Close()
+	return true, latency
 }
 
 // --- Export ---
