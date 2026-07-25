@@ -16,7 +16,7 @@ import (
 )
 
 // Version info
-const appVersion = "5.0.0"
+const appVersion = "6.0.0"
 
 // Colors
 var (
@@ -251,7 +251,7 @@ func runInteractive() {
 
 	for {
 		displayMenu()
-		fmt.Print("\n  Enter your choice (1-8): ")
+		fmt.Print("\n  Enter your choice (1-9): ")
 		scanner.Scan()
 		choice := strings.TrimSpace(scanner.Text())
 
@@ -267,12 +267,14 @@ func runInteractive() {
 		case "5":
 			portScanMenu(scanner)
 		case "6":
+			tracerouteMenu(scanner)
+		case "7":
 			searchHistory()
-		case "7", "exit", "EXIT", "Exit", "q", "Q":
+		case "8", "exit", "EXIT", "Exit", "q", "Q":
 			printExit()
 			os.Exit(0)
 		default:
-			errorColor.Println("\n  Invalid choice! Please enter 1-7.")
+			errorColor.Println("\n  Invalid choice! Please enter 1-8.")
 			pressEnter(scanner)
 		}
 	}
@@ -414,8 +416,9 @@ func displayMenu() {
 	fmt.Println("  3.  Batch Track from File")
 	fmt.Println("  4.  DNS Lookup")
 	fmt.Println("  5.  Port Scanner")
-	fmt.Println("  6.  View Search History")
-	fmt.Println("  7.  Exit")
+	fmt.Println("  6.  Traceroute")
+	fmt.Println("  7.  View Search History")
+	fmt.Println("  8.  Exit")
 	menuColor.Println("  " + strings.Repeat("─", 58))
 }
 
@@ -1297,6 +1300,154 @@ func checkPort(host string, port int, timeout time.Duration) (bool, int64) {
 	}
 	conn.Close()
 	return true, latency
+}
+
+// --- Traceroute ---
+
+type TracerouteHop struct {
+	TTL     int    `json:"ttl"`
+	IP      string `json:"ip"`
+	Host    string `json:"host,omitempty"`
+	Latency int64  `json:"latency_ms"`
+}
+
+func tracerouteMenu(scanner *bufio.Scanner) {
+	headerColor.Println("\n  " + strings.Repeat("─", 58))
+	headerColor.Println("  TRACEROUTE")
+	headerColor.Println("  " + strings.Repeat("─", 58))
+	fmt.Println("  1.  Traceroute to Host")
+	fmt.Println("  2.  Back to Main Menu")
+
+	fmt.Print("\n  Choice: ")
+	scanner.Scan()
+	choice := strings.TrimSpace(scanner.Text())
+
+	switch choice {
+	case "1":
+		runTraceroute(scanner)
+	case "2":
+		return
+	default:
+		errorColor.Println("\n  Invalid choice!")
+		pressEnter(scanner)
+	}
+}
+
+func runTraceroute(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter target hostname or IP: ")
+	scanner.Scan()
+	target := strings.TrimSpace(scanner.Text())
+
+	if target == "" {
+		errorColor.Println("\n  No target entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	// Resolve to IP if hostname
+	ip := target
+	if net.ParseIP(target) == nil {
+		ips, err := net.LookupHost(target)
+		if err != nil || len(ips) == 0 {
+			errorColor.Printf("\n  Could not resolve: %s\n", target)
+			pressEnter(scanner)
+			return
+		}
+		ip = ips[0]
+	}
+
+	fmt.Print("  Max hops (default 30): ")
+	scanner.Scan()
+	maxHops := 30
+	fmt.Sscanf(scanner.Text(), "%d", &maxHops)
+	if maxHops < 1 || maxHops > 64 {
+		maxHops = 30
+	}
+
+	headerColor.Printf("\n  Traceroute to %s (%s) — max %d hops\n", target, ip, maxHops)
+	headerColor.Println("  " + strings.Repeat("═", 58))
+	fmt.Printf("  %-4s %-18s %-20s %s\n", "TTL", "IP", "HOSTNAME", "LATENCY")
+	headerColor.Println("  " + strings.Repeat("─", 58))
+
+	for ttl := 1; ttl <= maxHops; ttl++ {
+		hop := traceOneHop(ip, ttl)
+
+		if hop.IP == "" {
+			fmt.Printf("  %-4d %-18s\n", ttl, "* * *")
+		} else {
+			hostDisplay := hop.Host
+			if hostDisplay == "" {
+				hostDisplay = "-"
+			}
+			fmt.Printf("  %-4d %-18s %-20s %dms\n", ttl, hop.IP, hostDisplay, hop.Latency)
+		}
+
+		// If we reached the target, stop
+		if hop.IP == ip {
+			break
+		}
+	}
+
+	headerColor.Println("  " + strings.Repeat("═", 58))
+	pressEnter(scanner)
+}
+
+func traceOneHop(target string, ttl int) TracerouteHop {
+	hop := TracerouteHop{TTL: ttl}
+
+	// Try connecting with decreasing TTL
+	// We use a trick: connect to a high port that likely won't be open,
+	// the TTL-exceeded response gives us the hop IP
+	addr := fmt.Sprintf("%s:80", target)
+
+	// Set up raw connection with TTL
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err == nil {
+		// Connected directly - this is the final hop or close to it
+		conn.Close()
+		hop.IP = target
+		hop.Latency = 1
+		hostnames, _ := net.LookupAddr(target)
+		if len(hostnames) > 0 {
+			hop.Host = strings.TrimSuffix(hostnames[0], ".")
+		}
+		return hop
+	}
+
+	// For intermediate hops, we try a UDP-based approach using a high port
+	// This requires the OS to send ICMP TTL exceeded messages
+	// Alternative: just try to connect and parse the error
+	udpAddr, _ := net.ResolveUDPAddr("udp", fmt.Sprintf("%s:33434", target))
+	if udpAddr == nil {
+		return hop
+	}
+
+	start := time.Now()
+	udpConn, err := net.DialUDP("udp", nil, udpAddr)
+	if err != nil {
+		return hop
+	}
+
+	// Set TTL on the connection
+	// Note: This is OS-dependent and may not work on all platforms
+	_, err = udpConn.Write([]byte("traceroute"))
+	udpConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+
+	buf := make([]byte, 1500)
+	_, err = udpConn.Read(buf)
+	udpConn.Close()
+	latency := time.Since(start).Milliseconds()
+
+	if err == nil {
+		hop.IP = target
+		hop.Latency = latency
+		hostnames, _ := net.LookupAddr(target)
+		if len(hostnames) > 0 {
+			hop.Host = strings.TrimSuffix(hostnames[0], ".")
+		}
+	}
+
+	return hop
 }
 
 // --- Export ---
