@@ -16,7 +16,7 @@ import (
 )
 
 // Version info
-const appVersion = "3.0.0"
+const appVersion = "4.0.0"
 
 // Colors
 var (
@@ -82,6 +82,8 @@ func main() {
 	exportFlag := flag.String("export", "", "Export results to file (specify filename)")
 	batchFlag := flag.String("batch", "", "Track multiple IPs from a file (one per line)")
 	historyFlag := flag.Bool("history", false, "View search history")
+	dnsFlag := flag.String("dns", "", "Perform DNS lookup on hostname")
+	reverseDNSFlag := flag.String("r", "", "Reverse DNS lookup on IP address")
 	versionFlag := flag.Bool("version", false, "Show version information")
 	helpFlag := flag.Bool("help", false, "Show usage information")
 
@@ -97,6 +99,8 @@ func main() {
 		fmt.Fprintf(os.Stderr, "    -export <file>     Export results to file (json or csv)\n")
 		fmt.Fprintf(os.Stderr, "    -batch <file>      Track multiple IPs from file\n")
 		fmt.Fprintf(os.Stderr, "    -history           View search history\n")
+		fmt.Fprintf(os.Stderr, "    -dns <hostname>    DNS lookup (A, MX, NS, TXT, CNAME)\n")
+		fmt.Fprintf(os.Stderr, "    -r <ip>            Reverse DNS lookup (IP → hostname)\n")
 		fmt.Fprintf(os.Stderr, "    -version, -v       Show version\n")
 		fmt.Fprintf(os.Stderr, "    -help, -h          Show this help\n\n")
 		fmt.Fprintf(os.Stderr, "  Examples:\n")
@@ -104,7 +108,9 @@ func main() {
 		fmt.Fprintf(os.Stderr, "    ip-tracker 8.8.8.8                  # Quick lookup\n")
 		fmt.Fprintf(os.Stderr, "    ip-tracker -self -json              # Your IP as JSON\n")
 		fmt.Fprintf(os.Stderr, "    ip-tracker -ip 8.8.8.8 -export out  # Export to file\n")
-		fmt.Fprintf(os.Stderr, "    ip-tracker -batch ips.txt -json     # Batch + JSON\n\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker -batch ips.txt -json     # Batch + JSON\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker -dns example.com         # DNS lookup\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker -r 8.8.8.8               # Reverse DNS\n\n")
 	}
 
 	flag.Parse()
@@ -195,6 +201,45 @@ func main() {
 		return
 	}
 
+	// CLI mode: --dns
+	if *dnsFlag != "" {
+		result := performFullDNSLookup(*dnsFlag)
+		if *jsonFlag {
+			data, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			headerColor.Println("\n  DNS Lookup Results")
+			headerColor.Println("  " + strings.Repeat("═", 50))
+			displayDNSResult(result)
+			headerColor.Println("  " + strings.Repeat("═", 50))
+		}
+		return
+	}
+
+	// CLI mode: --r (reverse DNS)
+	if *reverseDNSFlag != "" {
+		ip := *reverseDNSFlag
+		if net.ParseIP(ip) == nil {
+			errorColor.Fprintf(os.Stderr, "Invalid IP address: %s\n", ip)
+			os.Exit(1)
+		}
+		hostname, err := net.LookupAddr(ip)
+		if err != nil {
+			errorColor.Fprintf(os.Stderr, "Reverse DNS lookup failed: %v\n", err)
+			os.Exit(1)
+		}
+		if *jsonFlag {
+			result := map[string]any{"ip": ip, "hostnames": hostname}
+			data, _ := json.MarshalIndent(result, "", "  ")
+			fmt.Println(string(data))
+		} else {
+			for _, h := range hostname {
+				fmt.Printf("%s → %s\n", ip, strings.TrimSuffix(h, "."))
+			}
+		}
+		return
+	}
+
 	// Interactive mode
 	runInteractive()
 }
@@ -206,7 +251,7 @@ func runInteractive() {
 
 	for {
 		displayMenu()
-		fmt.Print("\n  Enter your choice (1-5): ")
+		fmt.Print("\n  Enter your choice (1-7): ")
 		scanner.Scan()
 		choice := strings.TrimSpace(scanner.Text())
 
@@ -218,12 +263,14 @@ func runInteractive() {
 		case "3":
 			batchTrackFromFile(scanner)
 		case "4":
+			dnsLookupMenu(scanner)
+		case "5":
 			searchHistory()
-		case "5", "exit", "EXIT", "Exit", "q", "Q":
+		case "6", "exit", "EXIT", "Exit", "q", "Q":
 			printExit()
 			os.Exit(0)
 		default:
-			errorColor.Println("\n  Invalid choice! Please enter 1-5.")
+			errorColor.Println("\n  Invalid choice! Please enter 1-6.")
 			pressEnter(scanner)
 		}
 	}
@@ -363,8 +410,9 @@ func displayMenu() {
 	fmt.Println("  1.  Track MY IP Address")
 	fmt.Println("  2.  Track ANOTHER IP Address")
 	fmt.Println("  3.  Batch Track from File")
-	fmt.Println("  4.  View Search History")
-	fmt.Println("  5.  Exit")
+	fmt.Println("  4.  DNS Lookup")
+	fmt.Println("  5.  View Search History")
+	fmt.Println("  6.  Exit")
 	menuColor.Println("  " + strings.Repeat("─", 58))
 }
 
@@ -595,7 +643,7 @@ func fetchIPInfo(ip string) (*IPInfo, error) {
 	var err error
 
 	// Retry up to 2 times
-	for attempt := 0; attempt < 2; attempt++ {
+	for attempt := range 2 {
 		resp, err = client.Get(url)
 		if err == nil && resp.StatusCode == http.StatusOK {
 			break
@@ -745,6 +793,267 @@ func pressEnter(scanner *bufio.Scanner) {
 		scanner.Scan()
 	} else {
 		bufio.NewScanner(os.Stdin).Scan()
+	}
+}
+
+// --- DNS Lookup ---
+
+type DNSResult struct {
+	Host       string            `json:"host"`
+	IPs        []string          `json:"ips,omitempty"`
+	MX         []string          `json:"mx,omitempty"`
+	NS         []string          `json:"ns,omitempty"`
+	TXT        []string          `json:"txt,omitempty"`
+	CNAME      string            `json:"cname,omitempty"`
+	CNAMEChain []string          `json:"cname_chain,omitempty"`
+	ReverseDNS string            `json:"reverse_dns,omitempty"`
+	TTL        map[string]uint32 `json:"ttl,omitempty"`
+}
+
+func dnsLookupMenu(scanner *bufio.Scanner) {
+	headerColor.Println("\n  " + strings.Repeat("─", 58))
+	headerColor.Println("  DNS LOOKUP")
+	headerColor.Println("  " + strings.Repeat("─", 58))
+	fmt.Println("  1.  Reverse DNS (IP → Hostname)")
+	fmt.Println("  2.  Forward DNS (Hostname → IP)")
+	fmt.Println("  3.  Full DNS Records")
+	fmt.Println("  4.  Back to Main Menu")
+
+	fmt.Print("\n  Choice: ")
+	scanner.Scan()
+	choice := strings.TrimSpace(scanner.Text())
+
+	switch choice {
+	case "1":
+		reverseDNSLookup(scanner)
+	case "2":
+		forwardDNSLookup(scanner)
+	case "3":
+		fullDNSLookup(scanner)
+	case "4":
+		return
+	default:
+		errorColor.Println("\n  Invalid choice!")
+		pressEnter(scanner)
+	}
+}
+
+func reverseDNSLookup(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter IP address: ")
+	scanner.Scan()
+	ip := strings.TrimSpace(scanner.Text())
+
+	if net.ParseIP(ip) == nil {
+		errorColor.Printf("\n  Invalid IP address: %s\n", ip)
+		pressEnter(scanner)
+		return
+	}
+
+	hostname, err := net.LookupAddr(ip)
+	if err != nil {
+		errorColor.Printf("\n  Reverse DNS lookup failed: %v\n", err)
+		pressEnter(scanner)
+		return
+	}
+
+	headerColor.Println("\n  " + strings.Repeat("═", 50))
+	headerColor.Println("  REVERSE DNS RESULTS")
+	headerColor.Println("  " + strings.Repeat("═", 50))
+	printField("IP Address", ip)
+	if len(hostname) > 0 {
+		for _, h := range hostname {
+			printField("Hostname", strings.TrimSuffix(h, "."))
+		}
+	} else {
+		warnColor.Println("  No hostname found for this IP")
+	}
+	headerColor.Println("  " + strings.Repeat("═", 50))
+	pressEnter(scanner)
+}
+
+func forwardDNSLookup(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter hostname (e.g., example.com): ")
+	scanner.Scan()
+	host := strings.TrimSpace(scanner.Text())
+
+	if host == "" {
+		errorColor.Println("\n  No hostname entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	headerColor.Println("\n  " + strings.Repeat("═", 50))
+	headerColor.Println("  FORWARD DNS RESULTS")
+	headerColor.Println("  " + strings.Repeat("═", 50))
+	printField("Hostname", host)
+
+	// A Records
+	ips, err := net.LookupHost(host)
+	if err == nil && len(ips) > 0 {
+		for _, ip := range ips {
+			printField("IPv4/IPv6", ip)
+		}
+	}
+
+	// CNAME
+	cname, err := net.LookupCNAME(host)
+	if err == nil && cname != host {
+		printField("CNAME", strings.TrimSuffix(cname, "."))
+	}
+
+	// MX Records
+	mxRecords, err := net.LookupMX(host)
+	if err == nil && len(mxRecords) > 0 {
+		for _, mx := range mxRecords {
+			printField("MX", fmt.Sprintf("%s (priority: %d)", strings.TrimSuffix(mx.Host, "."), mx.Pref))
+		}
+	}
+
+	// NS Records
+	nsRecords, err := net.LookupNS(host)
+	if err == nil && len(nsRecords) > 0 {
+		for _, ns := range nsRecords {
+			printField("NS", strings.TrimSuffix(ns.Host, "."))
+		}
+	}
+
+	// TXT Records
+	txtRecords, err := net.LookupTXT(host)
+	if err == nil && len(txtRecords) > 0 {
+		for _, txt := range txtRecords {
+			printField("TXT", txt)
+		}
+	}
+
+	headerColor.Println("  " + strings.Repeat("═", 50))
+	pressEnter(scanner)
+}
+
+func fullDNSLookup(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter hostname (e.g., example.com): ")
+	scanner.Scan()
+	host := strings.TrimSpace(scanner.Text())
+
+	if host == "" {
+		errorColor.Println("\n  No hostname entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	headerColor.Println("\n  " + strings.Repeat("═", 50))
+	headerColor.Println("  FULL DNS RECORDS")
+	headerColor.Println("  " + strings.Repeat("═", 50))
+
+	result := performFullDNSLookup(host)
+	displayDNSResult(result)
+
+	headerColor.Println("  " + strings.Repeat("═", 50))
+	pressEnter(scanner)
+}
+
+func performFullDNSLookup(host string) *DNSResult {
+	result := &DNSResult{Host: host}
+
+	// A/AAAA Records
+	ips, err := net.LookupHost(host)
+	if err == nil {
+		result.IPs = ips
+	}
+
+	// CNAME
+	cname, err := net.LookupCNAME(host)
+	if err == nil && cname != host+"." {
+		result.CNAME = strings.TrimSuffix(cname, ".")
+		// Follow CNAME chain
+		current := cname
+		for {
+			nextCNAME, err := net.LookupCNAME(strings.TrimSuffix(current, "."))
+			if err != nil || nextCNAME == current {
+				break
+			}
+			result.CNAMEChain = append(result.CNAMEChain, strings.TrimSuffix(nextCNAME, "."))
+			current = nextCNAME
+		}
+	}
+
+	// MX Records
+	mxRecords, err := net.LookupMX(host)
+	if err == nil {
+		for _, mx := range mxRecords {
+			result.MX = append(result.MX, fmt.Sprintf("%s (priority: %d)", strings.TrimSuffix(mx.Host, "."), mx.Pref))
+		}
+	}
+
+	// NS Records
+	nsRecords, err := net.LookupNS(host)
+	if err == nil {
+		for _, ns := range nsRecords {
+			result.NS = append(result.NS, strings.TrimSuffix(ns.Host, "."))
+		}
+	}
+
+	// TXT Records
+	txtRecords, err := net.LookupTXT(host)
+	if err == nil {
+		result.TXT = txtRecords
+	}
+
+	// Reverse DNS on first IP
+	if len(result.IPs) > 0 {
+		hostnames, err := net.LookupAddr(result.IPs[0])
+		if err == nil && len(hostnames) > 0 {
+			result.ReverseDNS = strings.TrimSuffix(hostnames[0], ".")
+		}
+	}
+
+	return result
+}
+
+func displayDNSResult(result *DNSResult) {
+	printField("Hostname", result.Host)
+
+	if result.CNAME != "" {
+		printField("CNAME", result.CNAME)
+	}
+
+	if len(result.CNAMEChain) > 0 {
+		for i, c := range result.CNAMEChain {
+			printField(fmt.Sprintf("CNAME Chain %d", i+1), c)
+		}
+	}
+
+	if len(result.IPs) > 0 {
+		for _, ip := range result.IPs {
+			printField("IP Address", ip)
+		}
+	}
+
+	if result.ReverseDNS != "" {
+		printField("Reverse DNS", result.ReverseDNS)
+	}
+
+	if len(result.MX) > 0 {
+		fmt.Println()
+		accentColor.Println("  ├─ MAIL SERVERS")
+		for _, mx := range result.MX {
+			printField("MX", mx)
+		}
+	}
+
+	if len(result.NS) > 0 {
+		fmt.Println()
+		accentColor.Println("  ├─ NAME SERVERS")
+		for _, ns := range result.NS {
+			printField("NS", ns)
+		}
+	}
+
+	if len(result.TXT) > 0 {
+		fmt.Println()
+		accentColor.Println("  ├─ TEXT RECORDS")
+		for _, txt := range result.TXT {
+			printField("TXT", txt)
+		}
 	}
 }
 
