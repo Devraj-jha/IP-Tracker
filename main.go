@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -15,7 +16,7 @@ import (
 )
 
 // Version info
-const appVersion = "2.0.0"
+const appVersion = "3.0.0"
 
 // Colors
 var (
@@ -74,6 +75,131 @@ type DetailedInfo struct {
 }
 
 func main() {
+	// CLI flags
+	selfFlag := flag.Bool("self", false, "Track your own public IP address")
+	ipFlag := flag.String("ip", "", "Track a specific IP address")
+	jsonFlag := flag.Bool("json", false, "Output results in JSON format")
+	exportFlag := flag.String("export", "", "Export results to file (specify filename)")
+	batchFlag := flag.String("batch", "", "Track multiple IPs from a file (one per line)")
+	historyFlag := flag.Bool("history", false, "View search history")
+	versionFlag := flag.Bool("version", false, "Show version information")
+	helpFlag := flag.Bool("help", false, "Show usage information")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "\n  IP Tracker v%s — Enhanced IP Intelligence Tool\n\n", appVersion)
+		fmt.Fprintf(os.Stderr, "  Usage:\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker [flags]\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker [IP ADDRESS]       # Direct IP lookup\n\n")
+		fmt.Fprintf(os.Stderr, "  Flags:\n")
+		fmt.Fprintf(os.Stderr, "    -self              Track your own public IP\n")
+		fmt.Fprintf(os.Stderr, "    -ip <address>      Track a specific IP address\n")
+		fmt.Fprintf(os.Stderr, "    -json              Output in JSON format\n")
+		fmt.Fprintf(os.Stderr, "    -export <file>     Export results to file (json or csv)\n")
+		fmt.Fprintf(os.Stderr, "    -batch <file>      Track multiple IPs from file\n")
+		fmt.Fprintf(os.Stderr, "    -history           View search history\n")
+		fmt.Fprintf(os.Stderr, "    -version, -v       Show version\n")
+		fmt.Fprintf(os.Stderr, "    -help, -h          Show this help\n\n")
+		fmt.Fprintf(os.Stderr, "  Examples:\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker                          # Interactive mode\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker 8.8.8.8                  # Quick lookup\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker -self -json              # Your IP as JSON\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker -ip 8.8.8.8 -export out  # Export to file\n")
+		fmt.Fprintf(os.Stderr, "    ip-tracker -batch ips.txt -json     # Batch + JSON\n\n")
+	}
+
+	flag.Parse()
+
+	// Handle flags
+	if *versionFlag {
+		fmt.Printf("IP Tracker v%s\n", appVersion)
+		return
+	}
+
+	if *helpFlag {
+		flag.Usage()
+		return
+	}
+
+	// CLI mode: --self
+	if *selfFlag {
+		info, err := trackMyIPCLI(*jsonFlag)
+		if err != nil {
+			errorColor.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if *exportFlag != "" {
+			exportSingleResult(info, *exportFlag)
+		}
+		return
+	}
+
+	// CLI mode: --ip
+	if *ipFlag != "" {
+		if net.ParseIP(*ipFlag) == nil {
+			errorColor.Fprintf(os.Stderr, "Invalid IP address: %s\n", *ipFlag)
+			os.Exit(1)
+		}
+		info, err := trackIPCLI(*ipFlag, *jsonFlag)
+		if err != nil {
+			errorColor.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if *exportFlag != "" {
+			exportSingleResult(info, *exportFlag)
+		}
+		return
+	}
+
+	// CLI mode: positional argument (e.g., ip-tracker 8.8.8.8)
+	if flag.NArg() > 0 {
+		ipArg := flag.Arg(0)
+		if net.ParseIP(ipArg) == nil {
+			errorColor.Fprintf(os.Stderr, "Invalid IP address: %s\n", ipArg)
+			os.Exit(1)
+		}
+		info, err := trackIPCLI(ipArg, *jsonFlag)
+		if err != nil {
+			errorColor.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if *exportFlag != "" {
+			exportSingleResult(info, *exportFlag)
+		}
+		return
+	}
+
+	// CLI mode: --batch
+	if *batchFlag != "" {
+		results, err := batchTrackCLI(*batchFlag)
+		if err != nil {
+			errorColor.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		if *exportFlag != "" {
+			err := exportResults(results, *exportFlag, "auto")
+			if err != nil {
+				errorColor.Fprintf(os.Stderr, "Export error: %v\n", err)
+				os.Exit(1)
+			}
+			successColor.Printf("Results exported to %s\n", *exportFlag)
+		} else if *jsonFlag {
+			data, _ := json.MarshalIndent(results, "", "  ")
+			fmt.Println(string(data))
+		}
+		return
+	}
+
+	// CLI mode: --history
+	if *historyFlag {
+		printHistoryCLI()
+		return
+	}
+
+	// Interactive mode
+	runInteractive()
+}
+
+func runInteractive() {
 	displayBanner()
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -101,6 +227,121 @@ func main() {
 			pressEnter(scanner)
 		}
 	}
+}
+
+// --- CLI Functions ---
+
+func trackMyIPCLI(jsonOutput bool) (*DetailedInfo, error) {
+	publicIP, err := getPublicIP()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get public IP: %w", err)
+	}
+
+	info, err := fetchIPInfo(publicIP)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch IP info: %w", err)
+	}
+
+	saveToHistory(info)
+	d := toDetailedInfo(info)
+
+	if jsonOutput {
+		data, _ := json.MarshalIndent(d, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		displayInfo(info)
+	}
+
+	return d, nil
+}
+
+func trackIPCLI(ip string, jsonOutput bool) (*DetailedInfo, error) {
+	info, err := fetchIPInfo(ip)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch IP info: %w", err)
+	}
+
+	saveToHistory(info)
+	d := toDetailedInfo(info)
+
+	if jsonOutput {
+		data, _ := json.MarshalIndent(d, "", "  ")
+		fmt.Println(string(data))
+	} else {
+		displayInfo(info)
+	}
+
+	return d, nil
+}
+
+func batchTrackCLI(filePath string) ([]*DetailedInfo, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	var ips []string
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line != "" && !strings.HasPrefix(line, "#") {
+			ips = append(ips, line)
+		}
+	}
+
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no valid IPs found in file")
+	}
+
+	var results []*DetailedInfo
+	for _, ip := range ips {
+		if net.ParseIP(ip) == nil {
+			fmt.Fprintf(os.Stderr, "Skipping invalid IP: %s\n", ip)
+			continue
+		}
+
+		info, err := fetchIPInfo(ip)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error for %s: %v\n", ip, err)
+			continue
+		}
+
+		saveToHistory(info)
+		results = append(results, toDetailedInfo(info))
+	}
+
+	return results, nil
+}
+
+func printHistoryCLI() {
+	entries, err := loadHistory()
+	if err != nil || len(entries) == 0 {
+		fmt.Println("No search history found.")
+		return
+	}
+
+	fmt.Printf("Search History (%d entries):\n\n", len(entries))
+	for _, e := range entries {
+		fmt.Printf("%s  %-15s  %s, %s  ISP: %s\n",
+			e.Timestamp, e.IP, e.City, e.Country, e.ISP)
+	}
+}
+
+func exportSingleResult(info *DetailedInfo, filename string) {
+	format := "json"
+	if strings.HasSuffix(filename, ".csv") {
+		format = "csv"
+	} else if strings.HasSuffix(filename, ".json") {
+		format = "json"
+	}
+
+	err := exportResults([]*DetailedInfo{info}, filename, format)
+	if err != nil {
+		errorColor.Fprintf(os.Stderr, "Export error: %v\n", err)
+		os.Exit(1)
+	}
+	successColor.Printf("Results exported to %s\n", filename)
 }
 
 func displayBanner() {
@@ -510,13 +751,25 @@ func pressEnter(scanner *bufio.Scanner) {
 // --- Export ---
 
 func exportResults(results []*DetailedInfo, filename, format string) error {
+	// Auto-detect format from filename
+	if format == "auto" {
+		if strings.HasSuffix(filename, ".csv") {
+			format = "csv"
+		} else {
+			format = "json"
+			if !strings.HasSuffix(filename, ".json") {
+				filename += ".json"
+			}
+		}
+	}
+
 	switch format {
 	case "json":
 		return exportJSON(results, filename)
 	case "csv":
 		return exportCSV(results, filename)
 	default:
-		return fmt.Errorf("unsupported format: %s", format)
+		return fmt.Errorf("unsupported format: %s (use json or csv)", format)
 	}
 }
 
