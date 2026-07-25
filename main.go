@@ -17,7 +17,7 @@ import (
 )
 
 // Version info
-const appVersion = "7.0.0"
+const appVersion = "8.0.0"
 
 // Colors
 var (
@@ -52,10 +52,12 @@ type IPInfo struct {
 	Proxy       bool    `json:"proxy"`
 	Hosting     bool    `json:"hosting"`
 	Query       string  `json:"query"`
+	Reverse     string  `json:"reverse"`
 }
 
 type DetailedInfo struct {
 	IPAddress      string  `json:"ip_address"`
+	ReverseDNS     string  `json:"reverse_dns,omitempty"`
 	Country        string  `json:"country"`
 	CountryCode    string  `json:"country_code"`
 	State          string  `json:"state"`
@@ -647,7 +649,7 @@ func getPublicIP() (string, error) {
 func fetchIPInfo(ip string) (*IPInfo, error) {
 	client := http.Client{Timeout: 10 * time.Second}
 
-	url := fmt.Sprintf("http://ip-api.com/json/%s?fields=status,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,mobile,proxy,hosting,query", ip)
+	url := fmt.Sprintf("http://ip-api.com/json/%s?fields=status,country,countryCode,region,regionName,city,zip,lat,lon,timezone,isp,org,as,asname,mobile,proxy,hosting,query,reverse", ip)
 
 	var resp *http.Response
 	var err error
@@ -697,6 +699,7 @@ func fetchIPInfo(ip string) (*IPInfo, error) {
 func toDetailedInfo(info *IPInfo) *DetailedInfo {
 	return &DetailedInfo{
 		IPAddress:      info.Query,
+		ReverseDNS:     info.Reverse,
 		Country:        info.Country,
 		CountryCode:    info.CountryCode,
 		State:          info.RegionName,
@@ -731,6 +734,9 @@ func displayInfo(info *IPInfo) {
 	fmt.Print("  │   ")
 	labelColor.Print("IP:  ")
 	valueColor.Println(d.IPAddress)
+	if d.ReverseDNS != "" {
+		printField("Reverse DNS", d.ReverseDNS)
+	}
 
 	// Location Section
 	fmt.Println()
