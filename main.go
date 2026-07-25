@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/tls"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,7 +17,7 @@ import (
 )
 
 // Version info
-const appVersion = "6.0.0"
+const appVersion = "7.0.0"
 
 // Colors
 var (
@@ -251,7 +252,7 @@ func runInteractive() {
 
 	for {
 		displayMenu()
-		fmt.Print("\n  Enter your choice (1-9): ")
+		fmt.Print("\n  Enter your choice (1-10): ")
 		scanner.Scan()
 		choice := strings.TrimSpace(scanner.Text())
 
@@ -269,12 +270,14 @@ func runInteractive() {
 		case "6":
 			tracerouteMenu(scanner)
 		case "7":
+			connectivityMenu(scanner)
+		case "8":
 			searchHistory()
-		case "8", "exit", "EXIT", "Exit", "q", "Q":
+		case "9", "exit", "EXIT", "Exit", "q", "Q":
 			printExit()
 			os.Exit(0)
 		default:
-			errorColor.Println("\n  Invalid choice! Please enter 1-8.")
+			errorColor.Println("\n  Invalid choice! Please enter 1-9.")
 			pressEnter(scanner)
 		}
 	}
@@ -417,8 +420,9 @@ func displayMenu() {
 	fmt.Println("  4.  DNS Lookup")
 	fmt.Println("  5.  Port Scanner")
 	fmt.Println("  6.  Traceroute")
-	fmt.Println("  7.  View Search History")
-	fmt.Println("  8.  Exit")
+	fmt.Println("  7.  Connectivity & Latency Test")
+	fmt.Println("  8.  View Search History")
+	fmt.Println("  9.  Exit")
 	menuColor.Println("  " + strings.Repeat("─", 58))
 }
 
@@ -1448,6 +1452,192 @@ func traceOneHop(target string, ttl int) TracerouteHop {
 	}
 
 	return hop
+}
+
+// --- Connectivity & Latency ---
+
+type ConnectivityResult struct {
+	Target   string  `json:"target"`
+	IP       string  `json:"ip"`
+	HTTPCode int     `json:"http_code,omitempty"`
+	Latency  int64   `json:"latency_ms"`
+	DNSTime  int64   `json:"dns_ms,omitempty"`
+	ConnTime int64   `json:"connect_ms,omitempty"`
+	TLS      bool    `json:"tls,omitempty"`
+	Status   string  `json:"status"`
+}
+
+func connectivityMenu(scanner *bufio.Scanner) {
+	headerColor.Println("\n  " + strings.Repeat("─", 58))
+	headerColor.Println("  CONNECTIVITY & LATENCY TEST")
+	headerColor.Println("  " + strings.Repeat("─", 58))
+	fmt.Println("  1.  Test HTTP/HTTPS Connectivity")
+	fmt.Println("  2.  Latency Benchmark (multiple targets)")
+	fmt.Println("  3.  Back to Main Menu")
+
+	fmt.Print("\n  Choice: ")
+	scanner.Scan()
+	choice := strings.TrimSpace(scanner.Text())
+
+	switch choice {
+	case "1":
+		testHTTPConnectivity(scanner)
+	case "2":
+		latencyBenchmark(scanner)
+	case "3":
+		return
+	default:
+		errorColor.Println("\n  Invalid choice!")
+		pressEnter(scanner)
+	}
+}
+
+func testHTTPConnectivity(scanner *bufio.Scanner) {
+	fmt.Print("\n  Enter URL or hostname (e.g., google.com): ")
+	scanner.Scan()
+	target := strings.TrimSpace(scanner.Text())
+
+	if target == "" {
+		errorColor.Println("\n  No target entered!")
+		pressEnter(scanner)
+		return
+	}
+
+	// Add protocol if missing
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		target = "https://" + target
+	}
+
+	headerColor.Println("\n  Testing connectivity...")
+	fmt.Println(strings.Repeat("─", 58))
+
+	// DNS resolution time
+	host := target
+	if strings.HasPrefix(target, "https://") {
+		host = strings.TrimPrefix(target, "https://")
+	} else {
+		host = strings.TrimPrefix(target, "http://")
+	}
+	host = strings.Split(host, "/")[0]
+
+	dnsStart := time.Now()
+	ips, err := net.LookupHost(host)
+	dnsTime := time.Since(dnsStart).Milliseconds()
+
+	if err != nil || len(ips) == 0 {
+		errorColor.Printf("\n  DNS resolution failed for %s\n", host)
+		pressEnter(scanner)
+		return
+	}
+
+	printField("Host", host)
+	printField("IP", ips[0])
+	printField("DNS Resolution", fmt.Sprintf("%dms", dnsTime))
+
+	// HTTP request
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	connStart := time.Now()
+	resp, err := client.Get(target)
+	connTime := time.Since(connStart).Milliseconds()
+
+	if err != nil {
+		errorColor.Printf("\n  Connection failed: %v\n", err)
+		pressEnter(scanner)
+		return
+	}
+	defer resp.Body.Close()
+
+	printField("Status", fmt.Sprintf("%d %s", resp.StatusCode, http.StatusText(resp.StatusCode)))
+	printField("Response Time", fmt.Sprintf("%dms", connTime))
+	printField("Protocol", resp.Proto)
+	printField("TLS", fmt.Sprintf("%v", resp.TLS != nil))
+
+	if resp.TLS != nil {
+		printField("TLS Version", tlsVersionName(resp.TLS.Version))
+		if len(resp.TLS.PeerCertificates) > 0 {
+			cert := resp.TLS.PeerCertificates[0]
+			printField("Certificate", cert.Subject.CommonName)
+			printField("Issuer", cert.Issuer.CommonName)
+			printField("Expires", cert.NotAfter.Format("2006-01-02 15:04:05"))
+		}
+	}
+
+	fmt.Println(strings.Repeat("─", 58))
+	pressEnter(scanner)
+}
+
+func tlsVersionName(version uint16) string {
+	switch version {
+	case tls.VersionTLS10:
+		return "TLS 1.0"
+	case tls.VersionTLS11:
+		return "TLS 1.1"
+	case tls.VersionTLS12:
+		return "TLS 1.2"
+	case tls.VersionTLS13:
+		return "TLS 1.3"
+	default:
+		return fmt.Sprintf("Unknown (0x%04x)", version)
+	}
+}
+
+func latencyBenchmark(scanner *bufio.Scanner) {
+	targets := []struct {
+		name string
+		url  string
+	}{
+		{"Google", "https://www.google.com"},
+		{"Cloudflare", "https://www.cloudflare.com"},
+		{"GitHub", "https://github.com"},
+		{"Amazon", "https://www.amazon.com"},
+		{"Microsoft", "https://www.microsoft.com"},
+	}
+
+	headerColor.Println("\n  Running latency benchmark...")
+	fmt.Println(strings.Repeat("═", 58))
+	fmt.Printf("  %-15s %-12s %-12s\n", "TARGET", "STATUS", "LATENCY")
+	fmt.Println(strings.Repeat("─", 58))
+
+	var totalLatency int64
+	var successCount int
+
+	client := &http.Client{Timeout: 5 * time.Second}
+
+	for _, t := range targets {
+		start := time.Now()
+		resp, err := client.Get(t.url)
+		latency := time.Since(start).Milliseconds()
+
+		if err != nil {
+			errorColor.Printf("  %-15s %-12s\n", t.name, "FAILED")
+			continue
+		}
+		resp.Body.Close()
+
+		totalLatency += latency
+		successCount++
+
+		if latency < 100 {
+			successColor.Printf("  %-15s %-12s %dms\n", t.name, "OK", latency)
+		} else if latency < 300 {
+			warnColor.Printf("  %-15s %-12s %dms\n", t.name, "OK", latency)
+		} else {
+			errorColor.Printf("  %-15s %-12s %dms\n", t.name, "SLOW", latency)
+		}
+	}
+
+	fmt.Println(strings.Repeat("─", 58))
+	if successCount > 0 {
+		avg := totalLatency / int64(successCount)
+		successColor.Printf("  Average latency: %dms (from %d targets)\n", avg, successCount)
+	}
+	pressEnter(scanner)
 }
 
 // --- Export ---
